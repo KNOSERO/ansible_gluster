@@ -1,0 +1,82 @@
+- name: Install GlusterFS client
+  package:
+    name:
+      - glusterfs-client
+      - glusterfs-server
+    state: present
+
+- name: Uruchomienie i włączenie usługi Glusterd
+  service:
+    name: glusterd
+    state: started
+    enabled: yes
+
+- name: Create /dev/fuse if it does not exist
+  command: mknod -m 666 /dev/fuse c 10 229
+  args:
+    creates: /dev/fuse
+
+- name: Ensure correct permissions for /dev/fuse
+  file:
+    path: /dev/fuse
+    mode: '0666'
+    state: file
+
+- name: Tworzenie skryptu startowego dla /dev/fuse
+  copy:
+    dest: /usr/local/bin/create-fuse.sh
+    content: |
+      #!/bin/bash
+      if [ ! -e /dev/fuse ]; then
+          mknod -m 666 /dev/fuse c 10 229
+      fi
+      mount -a
+      systemctl restart docker
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Tworzenie usługi systemd do automatycznego tworzenia /dev/fuse
+  copy:
+    dest: /etc/systemd/system/create-fuse.service
+    content: |
+      [Unit]
+      Description=Create /dev/fuse at boot
+      After=multi-user.target
+      
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/create-fuse.sh
+      RemainAfterExit=yes
+      
+      [Install]
+      WantedBy=multi-user.target
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Przeładowanie systemd
+  command: systemctl daemon-reload
+
+- name: Włączenie i uruchomienie usługi
+  systemd:
+    name: create-fuse
+    enabled: yes
+    state: started
+
+- name: Create mount directories
+  file:
+    path: "{{ item.mountpoint }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ glusterfs_mounts }}"
+
+- name: Add GlusterFS mounts to fstab
+  lineinfile:
+    path: /etc/fstab
+    line: "{{ glusterfs_servers[0] }},{{ glusterfs_servers[1] }}:/{{ item.volume }} {{ item.mountpoint }} glusterfs defaults,_netdev,x-systemd.requires=glusterd.service,x-systemd.automount 0 0"
+    state: present
+  loop: "{{ glusterfs_mounts }}"
+
+- name: Mount all GlusterFS volumes
+  command: mount -a
