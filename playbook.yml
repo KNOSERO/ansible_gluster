@@ -4,6 +4,10 @@
       - glusterfs-client
       - glusterfs-server
     state: present
+  register: glusterfs_install
+  retries: 5
+  delay: 30
+  until: glusterfs_install is success
 
 - name: Uruchomienie i włączenie usługi Glusterd
   service:
